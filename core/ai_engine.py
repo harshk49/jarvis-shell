@@ -1,6 +1,7 @@
 import re
 import os
 import platform
+import requests
 from google import genai
 from core.config import Config
 
@@ -42,65 +43,91 @@ def _build_system_prompt(cwd: str) -> str:
 def _clean_response(text: str) -> str:
     """Strip markdown code fences, backticks, and whitespace from AI response."""
     text = text.strip()
-    # Remove ```bash ... ``` or ```sh ... ``` wrappers
-    text = re.sub(r"^```(?:bash|sh|zsh|shell)?\s*\n?", "", text)
-    text = re.sub(r"\n?```\s*$", "", text)
-    # Remove inline backticks
-    text = text.strip("`").strip()
-    # Take only the first line if multiple were returned
+    
+    # If the response contains markdown code blocks, extract the content of the first one
+    block_match = re.search(r"```(?:bash|sh|zsh|shell)?\s*(.*?)```", text, re.DOTALL)
+    if block_match:
+        text = block_match.group(1).strip()
+    else:
+        # Otherwise, fall back to removing inline backticks and conversational filler
+        text = text.strip("`").strip()
+        # Remove typical conversational prefixes if no code block was used
+        text = re.sub(r"^(?:Sure|Here|The command|To [a-z]+)[^\n]*:\s*\n?", "", text, flags=re.IGNORECASE).strip()
+
+    # Take only the first line if multiple were returned (useful for 1-liner commands)
     lines = [l for l in text.splitlines() if l.strip()]
     return lines[0] if lines else text
 
 
 class AIEngine:
-    """Gemini-powered natural language to shell command translator."""
+    """Natural language to shell command translator with Gemini + Ollama fallback."""
 
     def __init__(self):
-        if not Config.AI_API_KEY:
-            raise ValueError(
-                "GEMINI_API_KEY not configured.\n"
-                "Get a free key at: https://aistudio.google.com/apikey\n"
-                "Then add to .env: GEMINI_API_KEY=your_key_here"
+        self.gemini_client = None
+        if Config.AI_API_KEY:
+            self.gemini_client = genai.Client(api_key=Config.AI_API_KEY)
+        self.gemini_model = Config.AI_MODEL
+        self.ollama_url = Config.OLLAMA_URL
+        self.ollama_model = Config.OLLAMA_MODEL
+
+    def _generate_with_gemini(self, system_prompt: str, user_input: str) -> str | None:
+        if not self.gemini_client:
+            return None
+        try:
+            response = self.gemini_client.models.generate_content(
+                model=self.gemini_model,
+                contents=user_input,
+                config=genai.types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0.1,   # Low temp for precise commands
+                    max_output_tokens=256,
+                ),
             )
+            if response.text:
+                return _clean_response(response.text)
+        except Exception as e:
+            print(f"\r\033[K\033[93m⚠ Gemini API failed: {e}. Falling back to Ollama...\033[0m")
+        return None
 
-        self.client = genai.Client(api_key=Config.AI_API_KEY)
-        self.model = Config.AI_MODEL
+    def _generate_with_ollama(self, system_prompt: str, user_input: str) -> str | None:
+        url = f"{self.ollama_url}/api/generate"
+        payload = {
+            "model": self.ollama_model,
+            "prompt": user_input,
+            "system": system_prompt,
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 256
+            }
+        }
+        try:
+            response = requests.post(url, json=payload, timeout=Config.COMMAND_TIMEOUT)
+            response.raise_for_status()
+            text = response.json().get("response", "")
+            return _clean_response(text) if text else None
+        except requests.exceptions.RequestException as e:
+            print(f"\r\033[K\033[91m✗ Ollama failed: {e}\033[0m")
+            return None
 
-    def generate_command(self, user_input: str, cwd: str, retries: int = 2) -> str | None:
+    def generate_command(self, user_input: str, cwd: str, retries: int = 1) -> str | None:
         """
         Convert natural language to a shell command.
-
-        Args:
-            user_input: The natural language request
-            cwd: Current working directory for context
-            retries: Number of retry attempts on failure
-
-        Returns:
-            Generated shell command string, or None on failure
         """
         system_prompt = _build_system_prompt(cwd)
 
-        for attempt in range(retries + 1):
-            try:
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=user_input,
-                    config=genai.types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        temperature=0.1,   # Low temp for precise commands
-                        max_output_tokens=256,
-                    ),
-                )
+        for _ in range(retries + 1):
+            command = None
+            
+            # Try primary provider (Gemini) if configured
+            if self.gemini_client:
+                command = self._generate_with_gemini(system_prompt, user_input)
+                
+            # If primary fails or is not configured, fall back to Ollama
+            if not command:
+                command = self._generate_with_ollama(system_prompt, user_input)
 
-                if response.text:
-                    command = _clean_response(response.text)
-                    if command:
-                        return command
-
-            except Exception as e:
-                if attempt < retries:
-                    continue
-                print(f"\033[91m✗ AI Error: {e}\033[0m")
-                return None
+            if command:
+                return command
 
         return None

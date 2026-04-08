@@ -1,3 +1,4 @@
 prompt_toolkit>=3.0
 python-dotenv>=1.0
 google-genai>=1.0
+requests>=2.0

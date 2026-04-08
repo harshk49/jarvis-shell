@@ -21,12 +21,12 @@ def main():
     print(BANNER.replace("\\033[", "\033["))
 
     # Validate config
-    errors = Config.validate()
-    if errors:
+    warnings = Config.validate()
+    if warnings:
         print("\033[1;93m⚠ Configuration warnings:\033[0m")
-        for err in errors:
-            print(f"\033[93m  • {err}\033[0m")
-        print("\033[90m  AI features disabled. Direct commands still work.\033[0m\n")
+        for warn in warnings:
+            print(f"\033[93m  • {warn}\033[0m")
+        print("\033[90m  Using fallback AI model where necessary.\033[0m\n")
 
     executor = CommandExecutor()
 
