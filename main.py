@@ -1,5 +1,8 @@
 import sys
+import os
 from prompt_toolkit import prompt
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.formatted_text import ANSI
 from core.command_executor import CommandExecutor
 from core.config import Config
@@ -37,9 +40,17 @@ def main():
     print("\033[90m  💡 Tips: Type shell commands directly, or describe what you want in plain English.\033[0m")
     print("\033[90m     Type 'exit' to quit.\033[0m\n")
 
+    history_file = os.path.expanduser("~/.jarvis/history.txt")
+    os.makedirs(os.path.dirname(history_file), exist_ok=True)
+    session_history = FileHistory(history_file)
+
     while True:
         try:
-            user_input = prompt("jarvis> ").strip()
+            user_input = prompt(
+                "jarvis> ",
+                history=session_history,
+                auto_suggest=AutoSuggestFromHistory()
+            ).strip()
 
             if not user_input:
                 continue

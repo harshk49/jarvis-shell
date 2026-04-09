@@ -1,9 +1,11 @@
 import re
 import os
 import platform
+import subprocess
 import requests
 from google import genai
 from core.config import Config
+from core.memory import MemoryManager
 
 
 # System prompt that turns the LLM into a command generator
@@ -31,13 +33,55 @@ CONTEXT:
 - Operating System: {os_info}
 - Shell: ZSH
 - Current Directory: {cwd}
+- Top 5 CPU Processes:
+{active_processes}
+- Recent Conversational Command History:
+{recent_history}
+- User Preferences/Aliases:
+{preferences}
 """
 
 
-def _build_system_prompt(cwd: str) -> str:
+def _get_active_processes() -> str:
+    """Get basic overview of current user heavy processes."""
+    try:
+        user = os.environ.get("USER", "")
+        # Get top 5 CPU processes for current user
+        output = subprocess.check_output(
+            ["ps", "-u", user, "-o", "pid,comm,%cpu", "--sort=-%cpu"],
+            text=True, stderr=subprocess.DEVNULL
+        )
+        lines = output.strip().splitlines()
+        # Return header + top 5
+        return "\n".join(lines[:6])
+    except Exception:
+        return "Unavailable"
+
+
+def _build_system_prompt(cwd: str, memory: MemoryManager = None) -> str:
     """Build the system prompt with current context."""
     os_info = f"{platform.system()} {platform.release()}"
-    return SYSTEM_PROMPT.format(os_info=os_info, cwd=cwd)
+    
+    active_procs = _get_active_processes()
+    history_text = "None"
+    prefs_text = "None"
+    
+    if memory:
+        recent = memory.get_recent_commands(limit=5)
+        if recent:
+            history_text = "\n".join([f"Q: {r['original_query']} -> A: {r['executed_command']}" for r in recent])
+        
+        prefs = memory.get_all_preferences()
+        if prefs:
+            prefs_text = "\n".join([f"{k}: {v}" for k, v in prefs.items()])
+
+    return SYSTEM_PROMPT.format(
+        os_info=os_info, 
+        cwd=cwd, 
+        active_processes=active_procs,
+        recent_history=history_text,
+        preferences=prefs_text
+    )
 
 
 def _clean_response(text: str) -> str:
@@ -62,7 +106,8 @@ def _clean_response(text: str) -> str:
 class AIEngine:
     """Natural language to shell command translator with Gemini + Ollama fallback."""
 
-    def __init__(self):
+    def __init__(self, memory_manager: MemoryManager = None):
+        self.memory = memory_manager
         self.gemini_client = None
         if Config.AI_API_KEY:
             self.gemini_client = genai.Client(api_key=Config.AI_API_KEY)
@@ -114,7 +159,7 @@ class AIEngine:
         """
         Convert natural language to a shell command.
         """
-        system_prompt = _build_system_prompt(cwd)
+        system_prompt = _build_system_prompt(cwd, self.memory)
 
         for _ in range(retries + 1):
             command = None

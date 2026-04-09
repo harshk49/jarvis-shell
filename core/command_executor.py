@@ -2,17 +2,19 @@ from core.pty_handler import ZshPTY
 from core.ai_engine import AIEngine
 from core.classifier import classify
 from core.safety import confirm_command
+from core.memory import MemoryManager
 
 
 class CommandExecutor:
     def __init__(self):
         self.pty = ZshPTY()
+        self.memory = MemoryManager()
         self.ai = None  # Lazy-loaded on first NL input
 
     def _get_ai(self) -> AIEngine:
         """Lazy-init AI engine (only when needed)."""
         if self.ai is None:
-            self.ai = AIEngine()
+            self.ai = AIEngine(memory_manager=self.memory)
         return self.ai
 
     def execute(self, user_input: str) -> str:
@@ -23,7 +25,9 @@ class CommandExecutor:
         input_type = classify(user_input)
 
         if input_type == "command":
-            return self.pty.run_command(user_input)
+            output = self.pty.run_command(user_input)
+            self.memory.record_command("direct_command", user_input, success=True)
+            return output
 
         # Natural language path
         return self._handle_natural_language(user_input)
@@ -54,6 +58,9 @@ class CommandExecutor:
 
         # Execute the approved command
         print()
+        
+        # Determine success visually inside PTY runs might be tricky. Let's assume True if it got here payload wise.
+        self.memory.record_command(user_input, final_command, success=True)
         return self.pty.run_command(final_command)
 
     def close(self):
