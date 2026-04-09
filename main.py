@@ -19,7 +19,7 @@ BANNER = r"""
 ╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
  ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝
 
-        J A R V I S
+        
 \033[0m
 \033[90m  AI-Powered Shell • v0.2 • Type naturally or use commands\033[0m
 """

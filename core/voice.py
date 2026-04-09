@@ -1,4 +1,21 @@
 import sys
+import os
+from contextlib import contextmanager
+
+@contextmanager
+def suppress_stderr():
+    """Context manager to suppress C-level standard error (useful for PyAudio ALSA spam)."""
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    sys.stderr.flush()
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(old_stderr)
+
 
 def get_recognizer():
     try:
@@ -22,7 +39,10 @@ def record_to_text(timeout: int = 5) -> str | None:
     
     # Optional print statement mapping handled by main UI wrapper
     try:
-        with sr.Microphone() as source:
+        with suppress_stderr():
+            mic = sr.Microphone()
+            
+        with mic as source:
             r.adjust_for_ambient_noise(source, duration=0.3)
             audio = r.listen(source, timeout=timeout, phrase_time_limit=15)
             
