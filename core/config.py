@@ -23,7 +23,7 @@ JARVIS_SAFETY_MODE="confirm"
     except Exception:
         pass
 
-load_dotenv(JARVISRC_PATH)
+load_dotenv(JARVISRC_PATH, override=True)
 
 
 class Config:

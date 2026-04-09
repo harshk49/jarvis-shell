@@ -17,10 +17,10 @@ Your job is to read the user's intent, summarize code if asked, and generate a l
 
 RULES:
 1. Output MUST be strictly valid JSON fitting this exact schema:
-{
+{{
   "explanation": "A string explaining your actions or summarizing files if the user asked to read them. Keep it brief. Empty string if not needed.",
   "commands": ["command_1", "command_2"]
-}
+}}
 2. Prefer SAFE flags whenever possible:
    - Use `rm -i` instead of `rm` for deletions
    - Use `--dry-run` when available and the user didn't say "force" or "now"
@@ -98,13 +98,25 @@ def _clean_response(text: str) -> dict | None:
         
     try:
         data = json.loads(text)
-        if isinstance(data, dict) and "commands" in data and "explanation" in data:
+        if isinstance(data, dict):
+            # Ensure keys exist
+            if "explanation" not in data: data["explanation"] = ""
+            if "commands" not in data: data["commands"] = []
             return data
     except Exception:
         pass
         
-    # Emergency fallback if JSON fails to parse
-    return None
+    # Emergency fallback: Regex extraction for models that fail strict JSON formatting
+    commands = re.findall(r"`([^`]+)`", text) # Look for backticked commands
+    if not commands:
+        # Check for multiple lines that look like shell commands
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        commands = [l for l in lines if l.startswith(("$ ", "# ", "sudo ", "apt ", "git "))]
+
+    return {
+        "explanation": text if not commands else "I've extracted the following plan from the response.",
+        "commands": [re.sub(r"^\$?\s*", "", c) for c in commands]
+    }
 
 
 class AIEngine:
