@@ -36,6 +36,9 @@ def main():
         for warn in warnings:
             print(f"\033[93m  • {warn}\033[0m")
         print("\033[90m  Using fallback AI model where necessary.\033[0m\n")
+        
+    if Config.SANDBOX_MODE:
+        print("\033[1;93m[!] JARVIS IS IN SANDBOX MODE. Commands will be simulated, not executed.\033[0m\n")
 
     executor = CommandExecutor()
 

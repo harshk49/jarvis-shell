@@ -2,19 +2,42 @@ import sys
 import os
 from contextlib import contextmanager
 
+try:
+    from ctypes import CFUNCTYPE, c_char_p, c_int, cdll
+    ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
+    def py_error_handler(filename, line, function, err, fmt):
+        pass
+    c_error_handler = ERROR_HANDLER_FUNC(py_error_handler)
+    asound = cdll.LoadLibrary('libasound.so.2')
+except Exception:
+    asound = None
+    c_error_handler = None
+
 @contextmanager
 def suppress_stderr():
     """Context manager to suppress C-level standard error (useful for PyAudio ALSA spam)."""
+    os.environ["JACK_NO_START_SERVER"] = "1"
+    
     devnull = os.open(os.devnull, os.O_WRONLY)
     old_stderr = os.dup(2)
     sys.stderr.flush()
     os.dup2(devnull, 2)
     os.close(devnull)
+    
+    if asound:
+        asound.snd_lib_error_set_handler(c_error_handler)
+        
     try:
         yield
     finally:
         os.dup2(old_stderr, 2)
         os.close(old_stderr)
+        if asound:
+            try:
+                asound.snd_lib_error_set_handler(None)
+            except Exception:
+                pass
+
 
 
 def get_recognizer():

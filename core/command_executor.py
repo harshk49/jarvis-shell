@@ -3,6 +3,7 @@ import sys
 from core.pty_handler import ZshPTY
 from core.ai_engine import AIEngine
 from core.classifier import classify
+from core.config import Config
 from core.safety import confirm_command, confirm_tasks
 from core.memory import MemoryManager
 
@@ -36,6 +37,10 @@ class CommandExecutor:
         input_type = classify(user_input)
 
         if input_type == "command":
+            if Config.SANDBOX_MODE:
+                print(f"\033[93m[SANDBOX MODE] Simulated direct execution: {user_input}\033[0m")
+                return ""
+                
             output = self.pty.run_command(user_input)
             self.memory.record_command("direct_command", user_input, success=True)
             return output
@@ -82,6 +87,10 @@ class CommandExecutor:
                 
             print()
             self.memory.record_command(user_input, final_command, success=True)
+            if Config.SANDBOX_MODE:
+                print(f"\033[93m[SANDBOX MODE] Skipped execution of single string: {final_command}\033[0m")
+                return ""
+                
             return self.pty.run_command(final_command)
 
         # Multi-Step Task Flow
@@ -101,6 +110,10 @@ class CommandExecutor:
                 print(f"\n\033[90mExecuting:\033[0m \033[1;37m{final_command}\033[0m")
                 
             self.memory.record_command(user_input, final_command, success=True)
+            if Config.SANDBOX_MODE:
+                print(f"  \033[93m[SANDBOX MODE] Simulated Output Skipped for: {final_command}\033[0m")
+                continue
+                
             out = self.pty.run_command(final_command)
             output_accum.append(out)
             

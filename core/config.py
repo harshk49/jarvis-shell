@@ -17,8 +17,9 @@ class Config:
     OLLAMA_URL = os.getenv("JARVIS_OLLAMA_URL", "http://localhost:11434")
     OLLAMA_MODEL = os.getenv("JARVIS_OLLAMA_MODEL", "deepseek-coder")
 
-    # Safety mode: "confirm" | "auto_safe" | "disabled"
+    # Safety config parameters
     SAFETY_MODE = os.getenv("JARVIS_SAFETY_MODE", "confirm")
+    SANDBOX_MODE = os.getenv("JARVIS_SANDBOX_MODE", "False").lower() == "true"
 
     # Command timeout in seconds
     COMMAND_TIMEOUT = int(os.getenv("JARVIS_COMMAND_TIMEOUT", "30"))
