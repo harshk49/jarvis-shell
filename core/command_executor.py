@@ -1,8 +1,19 @@
+import time
+import sys
 from core.pty_handler import ZshPTY
 from core.ai_engine import AIEngine
 from core.classifier import classify
 from core.safety import confirm_command, confirm_tasks
 from core.memory import MemoryManager
+
+def typewriter_print(text: str, speed: float = 0.015):
+    """Subtly animate text outputs."""
+    for char in text:
+        sys.stdout.write(char)
+        sys.stdout.flush()
+        time.sleep(speed)
+    print()
+
 
 
 class CommandExecutor:
@@ -54,7 +65,10 @@ class CommandExecutor:
         commands = ai_output.get("commands", [])
 
         if explanation:
-            print(f"\033[1;36m💬 Jarvis:\033[0m {explanation}\n")
+            sys.stdout.write("\033[1;36m💬 Jarvis:\033[0m ")
+            sys.stdout.flush()
+            typewriter_print(f"\033[1;36m{explanation}\033[0m", speed=0.015)
+            print()
             
         if not commands:
             # Maybe the user just asked for a summary and no commands were needed
