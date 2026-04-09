@@ -26,6 +26,41 @@ def detect_danger(command: str) -> list[str]:
     return warnings
 
 
+def confirm_tasks(commands: list[str]) -> str | None:
+    """
+    Show a planned execution sequence and ask for confirmation.
+    Returns "all", "step", or None.
+    """
+    if not commands:
+        return None
+
+    print()
+    print(f"\033[1;33m🤖 AI Tasks:\033[0m")
+    
+    for i, cmd in enumerate(commands, 1):
+        warnings = detect_danger(cmd)
+        warn_str = f" \033[1;91m[{'  '.join(warnings)}]\033[0m" if warnings else ""
+        print(f"  \033[90m{i}.\033[0m \033[1;37m{cmd}\033[0m{warn_str}")
+
+    print(f"\n\033[90m   [a] Run all   [s] Step-by-step   [n] Cancel\033[0m")
+
+    while True:
+        try:
+            choice = prompt("   → ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            return None
+
+        if choice in ("a", "all", ""):
+            return "all"
+        elif choice in ("s", "step"):
+            return "step"
+        elif choice in ("n", "no", "cancel"):
+            print("\033[90m   Cancelled.\033[0m")
+            return None
+        else:
+            print("\033[90m   Type a, s, or n\033[0m")
+
+
 def confirm_command(command: str) -> str | None:
     """
     Show the AI-generated command and ask for confirmation.

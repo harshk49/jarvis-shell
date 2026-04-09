@@ -1,7 +1,7 @@
 from core.pty_handler import ZshPTY
 from core.ai_engine import AIEngine
 from core.classifier import classify
-from core.safety import confirm_command
+from core.safety import confirm_command, confirm_tasks
 from core.memory import MemoryManager
 
 
@@ -42,26 +42,55 @@ class CommandExecutor:
 
         # Generate command from AI
         print(f"\033[90m🧠 Thinking...\033[0m", end="", flush=True)
-        command = ai.generate_command(user_input, cwd=self.pty.cwd)
+        ai_output = ai.generate_command(user_input, cwd=self.pty.cwd)
         # Clear the "Thinking..." line
         print("\r\033[K", end="")
 
-        if not command:
-            print("\033[91m✗ AI couldn't generate a command. Try rephrasing.\033[0m")
+        if not ai_output or not isinstance(ai_output, dict):
+            print("\033[91m✗ AI couldn't generate a valid sequence. Try rephrasing.\033[0m")
             return ""
 
-        # Safety confirmation
-        final_command = confirm_command(command)
+        explanation = ai_output.get("explanation", "").strip()
+        commands = ai_output.get("commands", [])
 
-        if final_command is None:
+        if explanation:
+            print(f"\033[1;36m💬 Jarvis:\033[0m {explanation}\n")
+            
+        if not commands:
+            # Maybe the user just asked for a summary and no commands were needed
             return ""
 
-        # Execute the approved command
-        print()
-        
-        # Determine success visually inside PTY runs might be tricky. Let's assume True if it got here payload wise.
-        self.memory.record_command(user_input, final_command, success=True)
-        return self.pty.run_command(final_command)
+        # Single Command Flow
+        if len(commands) == 1:
+            final_command = confirm_command(commands[0])
+            if not final_command:
+                return ""
+                
+            print()
+            self.memory.record_command(user_input, final_command, success=True)
+            return self.pty.run_command(final_command)
+
+        # Multi-Step Task Flow
+        mode = confirm_tasks(commands)
+        if not mode:
+            return ""
+            
+        output_accum = []
+        for cmd in commands:
+            if mode == "step":
+                final_command = confirm_command(cmd)
+                if not final_command:
+                    print("\033[90m   Workflow aborted.\033[0m")
+                    break
+            else:
+                final_command = cmd
+                print(f"\n\033[90mExecuting:\033[0m \033[1;37m{final_command}\033[0m")
+                
+            self.memory.record_command(user_input, final_command, success=True)
+            out = self.pty.run_command(final_command)
+            output_accum.append(out)
+            
+        return "\n".join(output_accum)
 
     def close(self):
         self.pty.close()

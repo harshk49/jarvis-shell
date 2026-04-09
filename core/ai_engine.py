@@ -3,31 +3,30 @@ import os
 import platform
 import subprocess
 import requests
+import json
 from google import genai
 from core.config import Config
 from core.memory import MemoryManager
+from core.file_parser import extract_file_contexts
 
 
 # System prompt that turns the LLM into a command generator
-SYSTEM_PROMPT = """You are JARVIS, an intelligent shell command generator for Linux/ZSH.
+SYSTEM_PROMPT = """You are JARVIS, an intelligent shell context assistant and command generator for Linux/ZSH.
 
-Your ONLY job is to convert natural language into executable shell commands.
+Your job is to read the user's intent, summarize code if asked, and generate a list of executable shell commands to satisfy the request.
 
 RULES:
-1. Output ONLY the shell command. No explanations, no markdown, no backticks, no comments.
+1. Output MUST be strictly valid JSON fitting this exact schema:
+{
+  "explanation": "A string explaining your actions or summarizing files if the user asked to read them. Keep it brief. Empty string if not needed.",
+  "commands": ["command_1", "command_2"]
+}
 2. Prefer SAFE flags whenever possible:
    - Use `rm -i` instead of `rm` for deletions
    - Use `--dry-run` when available and the user didn't say "force" or "now"
-   - Use `-i` (interactive) flags when destructive
-3. NEVER generate commands that:
-   - Wipe entire disks or partitions (dd if=/dev/zero, mkfs on system drives)
-   - Delete root filesystem (rm -rf /)
-   - Modify system-critical files (/etc/passwd, /etc/shadow) unless explicitly asked
-   - Fork bombs or infinite loops
-4. If the request is ambiguous, generate the SAFEST reasonable interpretation.
-5. Combine commands logically when needed (using && or pipes).
-6. Use modern tools when available (e.g., `rg` over `grep` if context suggests it).
-7. Output exactly ONE command (can use pipes, &&, etc. but one logical command).
+3. NEVER generate commands that wipe directories like (rm -rf /) or system files unless asked.
+4. To edit files, use standard GNU utilities like `sed`, `awk`, or `cat << 'EOF' > file`.
+5. Return multiple commands sequentially in the array if a multistep workflow is requested.
 
 CONTEXT:
 - Operating System: {os_info}
@@ -39,6 +38,7 @@ CONTEXT:
 {recent_history}
 - User Preferences/Aliases:
 {preferences}
+{file_context}
 """
 
 
@@ -58,7 +58,7 @@ def _get_active_processes() -> str:
         return "Unavailable"
 
 
-def _build_system_prompt(cwd: str, memory: MemoryManager = None) -> str:
+def _build_system_prompt(cwd: str, user_input: str, memory: MemoryManager = None) -> str:
     """Build the system prompt with current context."""
     os_info = f"{platform.system()} {platform.release()}"
     
@@ -75,32 +75,36 @@ def _build_system_prompt(cwd: str, memory: MemoryManager = None) -> str:
         if prefs:
             prefs_text = "\n".join([f"{k}: {v}" for k, v in prefs.items()])
 
+    file_context = extract_file_contexts(user_input, cwd)
+
     return SYSTEM_PROMPT.format(
         os_info=os_info, 
         cwd=cwd, 
         active_processes=active_procs,
         recent_history=history_text,
-        preferences=prefs_text
+        preferences=prefs_text,
+        file_context=file_context
     )
 
 
-def _clean_response(text: str) -> str:
-    """Strip markdown code fences, backticks, and whitespace from AI response."""
+def _clean_response(text: str) -> dict | None:
+    """Parse JSON structure from AI output, stripping codeblocks if necessary."""
     text = text.strip()
     
-    # If the response contains markdown code blocks, extract the content of the first one
-    block_match = re.search(r"```(?:bash|sh|zsh|shell)?\s*(.*?)```", text, re.DOTALL)
+    # Strip markdown ```json containers if they exist
+    block_match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
     if block_match:
         text = block_match.group(1).strip()
-    else:
-        # Otherwise, fall back to removing inline backticks and conversational filler
-        text = text.strip("`").strip()
-        # Remove typical conversational prefixes if no code block was used
-        text = re.sub(r"^(?:Sure|Here|The command|To [a-z]+)[^\n]*:\s*\n?", "", text, flags=re.IGNORECASE).strip()
-
-    # Take only the first line if multiple were returned (useful for 1-liner commands)
-    lines = [l for l in text.splitlines() if l.strip()]
-    return lines[0] if lines else text
+        
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and "commands" in data and "explanation" in data:
+            return data
+    except Exception:
+        pass
+        
+    # Emergency fallback if JSON fails to parse
+    return None
 
 
 class AIEngine:
@@ -115,7 +119,7 @@ class AIEngine:
         self.ollama_url = Config.OLLAMA_URL
         self.ollama_model = Config.OLLAMA_MODEL
 
-    def _generate_with_gemini(self, system_prompt: str, user_input: str) -> str | None:
+    def _generate_with_gemini(self, system_prompt: str, user_input: str) -> dict | None:
         if not self.gemini_client:
             return None
         try:
@@ -125,7 +129,8 @@ class AIEngine:
                 config=genai.types.GenerateContentConfig(
                     system_instruction=system_prompt,
                     temperature=0.1,   # Low temp for precise commands
-                    max_output_tokens=256,
+                    response_mime_type="application/json",
+                    max_output_tokens=1024,
                 ),
             )
             if response.text:
@@ -134,7 +139,7 @@ class AIEngine:
             print(f"\r\033[K\033[93m⚠ Gemini API failed: {e}. Falling back to Ollama...\033[0m")
         return None
 
-    def _generate_with_ollama(self, system_prompt: str, user_input: str) -> str | None:
+    def _generate_with_ollama(self, system_prompt: str, user_input: str) -> dict | None:
         url = f"{self.ollama_url}/api/generate"
         payload = {
             "model": self.ollama_model,
@@ -155,11 +160,11 @@ class AIEngine:
             print(f"\r\033[K\033[91m✗ Ollama failed: {e}\033[0m")
             return None
 
-    def generate_command(self, user_input: str, cwd: str, retries: int = 1) -> str | None:
+    def generate_command(self, user_input: str, cwd: str, retries: int = 1) -> dict | None:
         """
-        Convert natural language to a shell command.
+        Convert natural language to a structured JSON workflow map.
         """
-        system_prompt = _build_system_prompt(cwd, self.memory)
+        system_prompt = _build_system_prompt(cwd, user_input, self.memory)
 
         for _ in range(retries + 1):
             command = None
