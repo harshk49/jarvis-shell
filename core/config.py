@@ -1,8 +1,29 @@
 import os
 from dotenv import load_dotenv
 
-# Load .env from project root
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
+JARVISRC_PATH = os.path.expanduser("~/.jarvisrc")
+
+if not os.path.exists(JARVISRC_PATH):
+    default_config = """# JARVIS Global Configuration
+GEMINI_API_KEY=""
+JARVIS_AI_PROVIDER="gemini"
+JARVIS_AI_MODEL="gemini-2.0-flash"
+
+# Fallbacks
+JARVIS_OLLAMA_URL="http://localhost:11434"
+JARVIS_OLLAMA_MODEL="deepseek-coder"
+
+# Sandbox / Safety
+JARVIS_SANDBOX_MODE="False"
+JARVIS_SAFETY_MODE="confirm"
+"""
+    try:
+        with open(JARVISRC_PATH, "w") as f:
+            f.write(default_config)
+    except Exception:
+        pass
+
+load_dotenv(JARVISRC_PATH)
 
 
 class Config:
